@@ -1,0 +1,291 @@
+#include <Arduino.h>
+#include <ESP32QRCodeReader.h>
+#include <Wire.h> //for I2C communication
+#include <LiquidCrystal_I2C.h> //for LCD
+#include <Adafruit_PCF8574.h> //for IO expander
+
+ESP32QRCodeReader reader(CAMERA_MODEL_AI_THINKER);
+
+// Define custom I2C pins
+#define CUSTOM_SDA_PIN 15 
+#define CUSTOM_SCL_PIN 14 
+
+#define TAB_DOLO "FEVER"
+#define TAB_PARA "COLD"
+#define TAB_BP "INSULIN"
+#define TAB_NEW "NEW"
+//Push Buttons
+#define TIME_DELAY_UP    12
+#define TIME_DELAY_DOWN   0
+Int delay_time = 60;
+int current_tablet = 0;
+
+// Initialize the LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2); //default address is 0x27
+Adafruit_PCF8574 pcf1; //this board is having APR Voice module pins
+// Array of tablets to be consumed
+char *tablets[] = {TAB_DOLO, TAB_PARA, TAB_BP };
+int totalTablets = 3;
+
+int currentTabletIndex = 0; // Index of the currently announced tablet
+char *announcedTablet; // The tablet name that is currently announced
+
+void tabletReminder(char *tabletName)
+{
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Tablet Reminder");
+  lcd.setCursor(0, 1);
+  lcd.print(tabletName);
+
+  delay(3000);
+}
+
+boolean toggle_led = false;
+
+void onQrCodeTask(void *pvParameters)
+{
+  struct QRCodeData qrCodeData;
+  
+  while (true)
+  {
+    if(digitalRead(TIME_DELAY_UP) == 0)  //Push Buton Pressed
+    {
+       toggle_led = !toggle_led;
+       //LED ON OFF Control
+       digitalWrite(4,toggle_led);
+    }
+  
+    if (reader.receiveQrCode(&qrCodeData, 100))
+    {
+      if (qrCodeData.valid)
+      { 
+        if(strcmp(qrCodeData.payload, TAB_DOLO) == 0) //compare strings
+        {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Found QRCode");
+            lcd.setCursor(0, 1);
+            lcd.print(tablets[0]);
+            
+            pcf1.digitalWrite(0,LOW); //voice message play 
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            pcf1.digitalWrite(0,HIGH);
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+        }
+        if(strcmp(qrCodeData.payload, TAB_PARA) == 0)
+        {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Found QRCode");
+            lcd.setCursor(0, 1);
+            lcd.print(tablets[1]);
+            
+            pcf1.digitalWrite(1,LOW);
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            pcf1.digitalWrite(1,HIGH);
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+        }
+        if(strcmp(qrCodeData.payload, TAB_BP) == 0)
+        {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Found QRCode");
+            lcd.setCursor(0, 1);
+            lcd.print(tablets[2]);
+            
+            pcf1.digitalWrite(2,LOW);
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            pcf1.digitalWrite(2,HIGH);
+            vTaskDelay(3000 / portTICK_PERIOD_MS);
+        }
+      }
+    }
+  }
+}
+
+void setup()
+{
+  // Initialize I2C with custom pins
+  Wire.begin(CUSTOM_SDA_PIN, CUSTOM_SCL_PIN);
+  
+  //These two are push button connected to ESP32CAM for increase or decrease of time delay between tow medicine reminders
+  pinMode(TIME_DELAY_UP,INPUT);
+  pinMode(TIME_DELAY_DOWN,INPUT);
+  pinMode(4,OUTPUT); //LED
+  
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("MEDICINE REMINDR");
+  lcd.setCursor(0, 1);
+  lcd.print("Pls Set Time");
+  delay(4000);
+  
+  if( (digitalRead(TIME_DELAY_UP) == 0) || (digitalRead(TIME_DELAY_DOWN) == 0) ) //press any one button to get into setting mode
+  {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(" Time Duration");
+      lcd.setCursor(0, 1);
+      lcd.print(" Setting Mode");
+      delay(4000);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Set Alarm delay");
+  while(1)
+  {
+     if( (digitalRead(TIME_DELAY_UP) == 0) && (digitalRead(TIME_DELAY_DOWN) == 0) )
+     {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(" Time Setting");
+        lcd.setCursor(0, 1);
+        lcd.print("    Done");
+        delay(2500);
+        break;
+     }
+     if(digitalRead(TIME_DELAY_DOWN) == 0)
+     {
+        if(delay_time > 30) //keep 30seconds as minimum time between two reminders
+          delay_time--;
+     }
+     if(digitalRead(TIME_DELAY_UP) == 0)
+     {
+        delay_time++;
+     }
+     lcd.setCursor(0, 1);
+     lcd.print("Seconds: ");
+     lcd.print(delay_time);
+     delay(200);
+  }
+  }
+  
+  if (!pcf1.begin(0x20, &Wire))  //0x20 is default address. we can change the address of I2C driver board for multiple such driver boards
+  {
+    //KSP display error ON LCD
+    Serial.println("Couldn't find PCF8574");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("APR I2C Driver");
+    lcd.setCursor(0, 1);
+    lcd.print(" Init Failed");
+    delay(1000);
+    while (1);
+  }
+
+  pcf1.pinMode(0, OUTPUT);  //Voice pin
+  pcf1.pinMode(1, OUTPUT);  //Voice pin
+  pcf1.pinMode(2, OUTPUT);  //Voice pin
+  pcf1.pinMode(3, OUTPUT);  //Voice pin  //Welcome Message
+  pcf1.pinMode(4, OUTPUT);  //Voice pin
+  pcf1.pinMode(5, OUTPUT);  //Voice pin
+  pcf1.pinMode(6, OUTPUT);  //Voice pin
+  pcf1.pinMode(7, OUTPUT);  //Voice pin //Day Completed messsage
+  reader.setup(); //QR Code setup
+  reader.beginOnCore(1);
+  
+  xTaskCreate(onQrCodeTask, "onQrCode", 4 * 1024, NULL, 4, NULL);
+ //LED Flash with delay
+  digitalWrite(4,HIGH);
+  delay(100);
+  digitalWrite(4,LOW);
+  delay(1000);
+  digitalWrite(4,HIGH);
+  delay(100);
+  digitalWrite(4,LOW);
+  delay(1000);
+
+  pcf1.digitalWrite(3,LOW);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  pcf1.digitalWrite(3,HIGH);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);   
+}
+
+void loop()
+{
+  lcd.init();
+  lcd.backlight();
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Tablet Reminder");
+  lcd.setCursor(0, 1);
+  lcd.print(tablets[0]);
+  
+  pcf1.digitalWrite(6,LOW);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  pcf1.digitalWrite(6,HIGH);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
+  
+  current_tablet = 0; //use this with tablets[] array
+  
+  int tmp_time = delay_time;
+  while(tmp_time--)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Next Tablet:");
+    lcd.print(tmp_time);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+  
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Tablet Reminder");
+  lcd.setCursor(0, 1);
+  lcd.print(tablets[1]);
+  
+  pcf1.digitalWrite(5,LOW);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  pcf1.digitalWrite(5,HIGH);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
+    current_tablet = 1; 
+  
+  tmp_time = delay_time;
+  while(tmp_time--)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Next Tablet:");
+    lcd.print(tmp_time);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Tablet Reminder");
+  lcd.setCursor(0, 1);
+  lcd.print(tablets[2]);
+  
+  pcf1.digitalWrite(4,LOW);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
+  pcf1.digitalWrite(4,HIGH);
+  vTaskDelay(3000 / portTICK_PERIOD_MS);
+  
+  current_tablet = 2;
+  
+  tmp_time = delay_time;
+  while(tmp_time--)
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Next Tablet:");
+    lcd.print(tmp_time);
+    lcd.setCursor(0, 1);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+
+    //Day Completed Voice Message
+    pcf1.digitalWrite(7,LOW);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    pcf1.digitalWrite(7,HIGH);
+    vTaskDelay(3000 / portTICK_PERIOD_MS); vTaskDelay(3000 / portTICK_PERIOD_MS);
+  
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Day Completed");
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+}
